@@ -76,6 +76,12 @@ body.cam #strip { display: flex; }
 #strip button[aria-pressed="true"] { border-color: #ffe57a; box-shadow: 0 0 0 3px #e59a00; }
 #strip img { width: 100%; height: 100%; object-fit: cover; display: block; }
 #strip .num { position: absolute; left: 4px; top: 3px; background: rgba(0,0,0,.6); color: #fff; font-size: 13px; border-radius: 6px; padding: 0 6px; }
+/* 写真メニュー（2本指タップ／右クリック） */
+#shotMenu { position: fixed; z-index: 20; display: flex; flex-direction: column; gap: 8px; padding: 10px; background: #fff; border-radius: 14px; box-shadow: 0 6px 24px rgba(0,0,0,.35); min-width: 170px; }
+#shotMenu[hidden] { display: none; }
+#shotMenu .ttl { font-weight: 700; text-align: center; font-size: 15px; }
+#shotMenu button { width: 100%; justify-content: flex-start; border: 2px solid #d5e3ef; }
+#shotMenu .del { color: #c0392b; }
 #liveBtn { color: #fff; font-size: 17px; background: #222 !important; }
 #liveBtn::before { content: "●"; color: #ff4d4d; margin-right: 4px; }
 @media (max-width: 1300px) { .label { display: none; } }
@@ -91,6 +97,12 @@ body.cam #strip { display: flex; }
   <canvas id="draw"></canvas>
   <canvas id="live"></canvas>
   <div id="strip"><button id="liveBtn" title="カメラの映像にもどる">ライブ</button><div id="thumbs" style="display:contents"></div></div>
+  <div id="shotMenu" hidden>
+    <div class="ttl" id="shotMenuTtl"></div>
+    <button id="shotSave">💾 保存</button>
+    <button id="shotDel" class="del">🗑 削除</button>
+    <button id="shotClose">とじる</button>
+  </div>
 </div>
 
 <div id="bar">
@@ -371,7 +383,8 @@ body.cam #strip { display: flex; }
     thumbs.innerHTML = '';
     for (const s of shots) {
       const b = document.createElement('button');
-      b.title = s.n + 'まいめの写真';
+      b.title = s.n + 'まいめの写真（2本指タップ・右クリックで 保存／削除）';
+      b.dataset.n = s.n;
       b.setAttribute('aria-pressed', String(s === view));
       b.innerHTML = `<img src="${s.url}" alt=""><span class="num">${s.n}</span>`;
       b.addEventListener('click', () => setView(s));
@@ -397,6 +410,61 @@ body.cam #strip { display: flex; }
   document.getElementById('snapBtn').addEventListener('click', snap);
   liveBtn.addEventListener('click', () => setView(null));
   renderStrip();
+
+  // ── 写真メニュー：2本指タップ（パソコンは右クリック）で 保存／削除 ──
+  const menu = document.getElementById('shotMenu');
+  let menuShot = null;
+  const shotOf = el => { const b = el && el.closest && el.closest('#thumbs [data-n]'); return b ? shots.find(s => s.n === +b.dataset.n) : null; };
+  function openMenu(s, btn) {
+    menuShot = s;
+    document.getElementById('shotMenuTtl').textContent = s.n + 'まいめの写真';
+    menu.hidden = false;
+    const r = btn.getBoundingClientRect(), m = menu.getBoundingClientRect();
+    menu.style.left = Math.max(8, r.left - m.width - 10) + 'px';
+    menu.style.top = Math.min(window.innerHeight - m.height - 8, Math.max(8, r.top)) + 'px';
+  }
+  function closeMenu() { menu.hidden = true; menuShot = null; }
+  const strip = document.getElementById('strip');
+  strip.addEventListener('touchstart', e => {
+    if (e.touches.length < 2) return;
+    for (const t of e.touches) {
+      const el = document.elementFromPoint(t.clientX, t.clientY), s = shotOf(el);
+      if (s) { e.preventDefault(); openMenu(s, el.closest('[data-n]')); return; }
+    }
+  }, { passive: false });
+  strip.addEventListener('contextmenu', e => {
+    const s = shotOf(e.target);
+    if (s) { e.preventDefault(); openMenu(s, e.target.closest('[data-n]')); }
+  });
+  document.addEventListener('pointerdown', e => { if (!menu.hidden && !menu.contains(e.target) && !strip.contains(e.target)) closeMenu(); });
+  document.getElementById('shotClose').addEventListener('click', closeMenu);
+  document.getElementById('shotDel').addEventListener('click', () => {
+    const s = menuShot; closeMenu(); if (!s) return;
+    shots = shots.filter(x => x !== s);
+    if (view === s) setView(null); else renderStrip();
+  });
+  // 写真に 書きこみを かさねて 1まいの画像にして ダウンロードする
+  document.getElementById('shotSave').addEventListener('click', () => {
+    const s = menuShot; closeMenu(); if (!s) return;
+    const img = new Image();
+    img.onload = () => {
+      const iw = img.naturalWidth, ih = img.naturalHeight;
+      const out = document.createElement('canvas'); out.width = iw; out.height = ih;
+      const o = out.getContext('2d'); o.drawImage(img, 0, 0);
+      // 画面での 写真の位置（object-fit: contain）から 写真の座標に なおす
+      const k = Math.min(W / iw, H / ih), ox = (W - iw * k) / 2, oy = (H - ih * k) / 2;
+      const ink = document.createElement('canvas'); ink.width = iw; ink.height = ih;
+      const c = ink.getContext('2d'); c.setTransform(1 / k, 0, 0, 1 / k, -ox / k, -oy / k);
+      s.strokes.forEach(st => paint(c, st)); // 消しゴムは 書きこみだけを けす
+      o.drawImage(ink, 0, 0);
+      const d = new Date(), p = v => String(v).padStart(2, '0');
+      const a = document.createElement('a');
+      a.download = `書画カメラ_${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}_${s.n}.jpg`;
+      a.href = out.toDataURL('image/jpeg', .92);
+      document.body.appendChild(a); a.click(); a.remove();
+    };
+    img.src = s.url;
+  });
 
   document.addEventListener('keydown', e => {
     if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); strokes.pop(); redraw(); }
