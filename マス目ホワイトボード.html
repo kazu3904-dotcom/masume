@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>マス目ホワイトボード</title>
+<style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@500;700&display=swap">
+<style>
+/* Layout: full-screen board, one toolbar docked at the bottom like a classroom display */
+:root {
+  --board: #ffffff;
+  --ink: #23303a;
+  --bar: #2f8fd6;
+  --bar-deep: #1f6fae;
+  --chip: #ffffff;
+  --chip-on: #ffe57a;
+  --grid: #9cc3e0;
+  --guide: #c9dced;
+  --font: "M PLUS Rounded 1c", "Hiragino Maru Gothic ProN", "Meiryo", sans-serif;
+  color-scheme: light;
+}
+html, body { height: 100%; }
+body {
+  background: var(--board); color: var(--ink); font-family: var(--font);
+  display: flex; flex-direction: column; overflow: hidden;
+  touch-action: none; user-select: none; -webkit-user-select: none;
+}
+#stage { position: relative; flex: 1; min-height: 0; background: var(--board); }
+#stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+#draw, #live { cursor: crosshair; }
+
+#bar {
+  background: var(--bar); color: #fff;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 12px;
+  padding-block: 6px calc(6px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.label { font-size: 13px; font-weight: 700; letter-spacing: .05em; opacity: .9; margin-right: 2px; }
+.sep { width: 1px; align-self: stretch; background: rgba(255,255,255,.35); }
+
+button {
+  font: inherit; font-weight: 700; font-size: 18px; color: var(--ink);
+  background: var(--chip); border: 3px solid transparent; border-radius: 10px;
+  min-width: 48px; height: 48px; padding: 0 10px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+}
+button:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+button[aria-pressed="true"] { background: var(--chip-on); border-color: #e59a00; }
+.grid-btn { font-variant-numeric: tabular-nums; min-width: 60px; }
+.grid-btn small { font-size: 12px; font-weight: 500; }
+.swatch { min-width: 44px; width: 44px; height: 44px; padding: 0; border-radius: 50%; border: 3px solid #fff; }
+.swatch[aria-pressed="true"] { border-color: #ffe57a; box-shadow: 0 0 0 3px var(--bar-deep); }
+.size { min-width: 48px; width: 48px; }
+.size i { display: block; border-radius: 50%; background: var(--ink); }
+.danger { background: #fff; color: #c0392b; }
+svg { width: 26px; height: 26px; }
+/* 書画カメラモード：マス目をかくして、カメラの映像をうつす */
+#cam { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; display: none; }
+#cam.rot { transform: rotate(180deg); }
+#camMsg { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; text-align: center; padding: 24px; color: #fff; font-size: 22px; font-weight: 700; line-height: 1.7; white-space: pre-line; pointer-events: none; }
+body.cam #cam { display: block; }
+body.cam #camMsg.show { display: flex; }
+body.cam #gridCv, body.cam .grid-group, body.cam .grid-group + .sep { display: none; }
+.cam-only { display: none !important; }
+body.cam .cam-only { display: inline-flex !important; }
+body.cam .cam-only[hidden] { display: none !important; }
+#camBtn[aria-pressed="true"] { background: var(--chip-on); border-color: #e59a00; }
+/* 撮影した写真（写真を見ているあいだは ライブ映像の上にかさねる） */
+#shot { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; display: none; }
+body.cam #shot.show { display: block; }
+#snapBtn { background: #ff5a5f; color: #fff; }
+/* 履歴（右がわに ならべる） */
+#strip { position: absolute; top: 8px; right: 8px; bottom: 8px; width: 148px; display: none; flex-direction: column; align-items: center; gap: 6px; padding: 4px 0; overflow-x: hidden; overflow-y: auto; z-index: 5; }
+body.cam #strip { display: flex; }
+#strip button { position: relative; flex: none; width: 128px; height: 76px; min-width: 0; padding: 0; border: 3px solid #fff; border-radius: 8px; overflow: hidden; background: #333; box-shadow: 0 2px 6px rgba(0,0,0,.4); }
+#strip button[aria-pressed="true"] { border-color: #ffe57a; box-shadow: 0 0 0 3px #e59a00; }
+#strip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+#strip .num { position: absolute; left: 4px; top: 3px; background: rgba(0,0,0,.6); color: #fff; font-size: 13px; border-radius: 6px; padding: 0 6px; }
+#liveBtn { color: #fff; font-size: 17px; background: #222 !important; }
+#liveBtn::before { content: "●"; color: #ff4d4d; margin-right: 4px; }
+@media (max-width: 1300px) { .label { display: none; } }
+@media (max-width: 700px) { button { height: 44px; min-width: 44px; font-size: 15px; } .grid-btn { min-width: 48px; } }
+</style>
+</head><body>
+
+<div id="stage">
+  <video id="cam" autoplay playsinline muted></video>
+  <img id="shot" alt="">
+  <div id="camMsg"></div>
+  <canvas id="gridCv"></canvas>
+  <canvas id="draw"></canvas>
+  <canvas id="live"></canvas>
+  <div id="strip"><button id="liveBtn" title="カメラの映像にもどる">ライブ</button><div id="thumbs" style="display:contents"></div></div>
+</div>
+
+<div id="bar">
+  <div class="group">
+    <button id="camBtn" title="書画カメラとマス目を切りかえる"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg><span id="camLabel">書画カメラ</span></button>
+    <button id="camSwitch" class="cam-only" title="つかうカメラを切りかえる" hidden>カメラ切替</button>
+    <button id="snapBtn" class="cam-only" title="いまの映像を写真にする">📸 撮影</button>
+    <button id="camRot" class="cam-only" title="映像を上下さかさまにする">↻ 回転</button>
+  </div>
+  <div class="sep"></div>
+  <div class="group grid-group" role="group" aria-label="マス目">
+    <span class="label">マス目</span>
+    <button class="grid-btn" data-grid="0" id="g0">なし</button>
+    <button class="grid-btn" data-grid="8" id="g8">8</button>
+    <button class="grid-btn" data-grid="10" id="g10">10</button>
+    <button class="grid-btn" data-grid="12" id="g12">12</button>
+    <button class="grid-btn" data-grid="15" id="g15">15</button>
+    <button id="guideBtn" title="マスの中に十字の点線を入れる">十字線</button>
+  </div>
+  <div class="sep"></div>
+  <div class="group" role="group" aria-label="道具">
+    <button id="tPen" data-tool="pen" title="ペン"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20l4-1L19 8l-3-3L5 16z"/><path d="M14 7l3 3"/></svg></button>
+    <button id="tMarker" data-tool="marker" title="蛍光ペン"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 15l-3 5h5l2-3"/><path d="M9 15l7-11 4 3-7 10z"/></svg></button>
+    <button id="tEraser" data-tool="eraser" title="消しゴム"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16l9-9 6 6-6 6H8z"/><path d="M9 11l6 6"/><path d="M13 19h7"/></svg></button>
+  </div>
+  <div class="sep"></div>
+  <div class="group" role="group" aria-label="色">
+    <button class="swatch" data-color="#1b1b1b" style="background:#1b1b1b" title="くろ"></button>
+    <button class="swatch" data-color="#d62828" style="background:#d62828" title="あか"></button>
+    <button class="swatch" data-color="#1d5fd1" style="background:#1d5fd1" title="あお"></button>
+    <button class="swatch" data-color="#1f9d4c" style="background:#1f9d4c" title="みどり"></button>
+    <button class="swatch" data-color="#f08c00" style="background:#f08c00" title="オレンジ"></button>
+  </div>
+  <div class="sep"></div>
+  <div class="group" role="group" aria-label="太さ">
+    <button class="size" data-size="4" title="ほそい"><i style="width:6px;height:6px"></i></button>
+    <button class="size" data-size="8" title="ふつう"><i style="width:11px;height:11px"></i></button>
+    <button class="size" data-size="16" title="ふとい"><i style="width:18px;height:18px"></i></button>
+  </div>
+  <div class="sep"></div>
+  <div class="group">
+    <button id="undoBtn" title="ひとつもどす"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/></svg></button>
+    <button id="clearBtn" class="danger">ぜんぶ消す</button>
+    <button id="fsBtn" title="全画面"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+  </div>
+</div>
+
+<script>
+(() => {
+  const stage = document.getElementById('stage');
+  const gridCv = document.getElementById('gridCv');
+  const drawCv = document.getElementById('draw');
+  const liveCv = document.getElementById('live');
+  const gctx = gridCv.getContext('2d'), dctx = drawCv.getContext('2d'), lctx = liveCv.getContext('2d');
+
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+  };
+
+  const state = {
+    grid: store.get('grid', 10),
+    guide: store.get('guide', true),
+    tool: 'pen', color: '#1b1b1b', size: 8,
+  };
+  let strokes = [];       // committed strokes in CSS-pixel coords
+  let current = null;
+  let W = 0, H = 0, dpr = 1;
+
+  function resize() {
+    const r = stage.getBoundingClientRect();
+    W = r.width; H = r.height; dpr = window.devicePixelRatio || 1;
+    for (const cv of [gridCv, drawCv, liveCv]) {
+      cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+      cv.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    drawGrid(); redraw();
+  }
+
+  // Grid: N squares across the width, rows fill the height, centered.
+  function drawGrid() {
+    gctx.clearRect(0, 0, W, H);
+    const n = state.grid;
+    if (!n) return;
+    const margin = 8;
+    const aw = W - margin * 2, ah = H - margin * 2;
+    // 画面いっぱいに ぴったり敷き詰める：ボタンの数は「たて」のマスの数。よこは 正方形に近くなる数にする
+    const rows = n;
+    const ch = ah / rows;
+    const cols = Math.max(1, Math.round(aw / ch));
+    const cw = aw / cols;
+    const px = v => Math.round(v) + .5; // 線をくっきり見せる
+    const x0 = margin, y0 = margin, x1 = x0 + aw, y1 = y0 + ah;
+
+    if (state.guide) {
+      gctx.save();
+      gctx.strokeStyle = getCss('--guide'); gctx.lineWidth = 1.5; gctx.setLineDash([6, 6]);
+      gctx.beginPath();
+      for (let i = 0; i < cols; i++) { const x = px(x0 + cw * i + cw / 2); gctx.moveTo(x, y0); gctx.lineTo(x, y1); }
+      for (let j = 0; j < rows; j++) { const y = px(y0 + ch * j + ch / 2); gctx.moveTo(x0, y); gctx.lineTo(x1, y); }
+      gctx.stroke(); gctx.restore();
+    }
+    gctx.strokeStyle = getCss('--grid'); gctx.lineWidth = 2; gctx.setLineDash([]);
+    gctx.beginPath();
+    for (let i = 0; i <= cols; i++) { const x = px(x0 + cw * i); gctx.moveTo(x, px(y0)); gctx.lineTo(x, px(y1)); }
+    for (let j = 0; j <= rows; j++) { const y = px(y0 + ch * j); gctx.moveTo(px(x0), y); gctx.lineTo(px(x1), y); }
+    gctx.stroke();
+  }
+  function getCss(v) { return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+
+  function paint(ctx, s) {
+    const p = s.pts; if (!p.length) return;
+    ctx.save();
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    if (s.tool === 'eraser') { ctx.globalCompositeOperation = 'destination-out'; ctx.strokeStyle = '#000'; ctx.lineWidth = s.size * 4; }
+    else if (s.tool === 'marker') { ctx.globalAlpha = .35; ctx.strokeStyle = s.color; ctx.lineWidth = s.size * 3; ctx.lineCap = 'butt'; }
+    else { ctx.strokeStyle = s.color; ctx.lineWidth = s.size; }
+    ctx.beginPath(); ctx.moveTo(p[0][0], p[0][1]);
+    if (p.length === 1) ctx.lineTo(p[0][0] + .01, p[0][1]);
+    for (let i = 1; i < p.length - 1; i++) {
+      const mx = (p[i][0] + p[i + 1][0]) / 2, my = (p[i][1] + p[i + 1][1]) / 2;
+      ctx.quadraticCurveTo(p[i][0], p[i][1], mx, my);
+    }
+    if (p.length > 1) ctx.lineTo(p[p.length - 1][0], p[p.length - 1][1]);
+    ctx.stroke(); ctx.restore();
+  }
+  function redraw() { dctx.clearRect(0, 0, W, H); strokes.forEach(s => paint(dctx, s)); }
+
+  function pos(e) { const r = liveCv.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+
+  liveCv.addEventListener('pointerdown', e => {
+    if (current) return;
+    liveCv.setPointerCapture(e.pointerId);
+    current = { id: e.pointerId, tool: state.tool, color: state.color, size: state.size, pts: [pos(e)] };
+    renderLive();
+  });
+  liveCv.addEventListener('pointermove', e => {
+    if (!current || e.pointerId !== current.id) return;
+    const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+    for (const ev of evs) current.pts.push(pos(ev));
+    renderLive();
+  });
+  function end(e) {
+    if (!current || e.pointerId !== current.id) return;
+    strokes.push(current); current = null;
+    lctx.clearRect(0, 0, W, H); redraw();
+  }
+  liveCv.addEventListener('pointerup', end);
+  liveCv.addEventListener('pointercancel', end);
+
+  function renderLive() {
+    lctx.clearRect(0, 0, W, H);
+    if (current.tool === 'eraser') { // erase shows directly on the drawing layer
+      redraw(); paint(dctx, current);
+    } else paint(lctx, current);
+  }
+
+  // Controls
+  const $$ = s => document.querySelectorAll(s);
+  function sync() {
+    $$('.grid-btn').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.grid === state.grid)));
+    document.getElementById('guideBtn').setAttribute('aria-pressed', String(state.guide));
+    document.getElementById('guideBtn').disabled = !state.grid;
+    document.getElementById('guideBtn').style.opacity = state.grid ? 1 : .5;
+    $$('[data-tool]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tool === state.tool)));
+    $$('.swatch').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.color === state.color)));
+    $$('.size').forEach(b => b.setAttribute('aria-pressed', String(+b.dataset.size === state.size)));
+  }
+  $$('.grid-btn').forEach(b => b.addEventListener('click', () => { state.grid = +b.dataset.grid; store.set('grid', state.grid); drawGrid(); sync(); }));
+  document.getElementById('guideBtn').addEventListener('click', () => { state.guide = !state.guide; store.set('guide', state.guide); drawGrid(); sync(); });
+  $$('[data-tool]').forEach(b => b.addEventListener('click', () => { state.tool = b.dataset.tool; sync(); }));
+  $$('.swatch').forEach(b => b.addEventListener('click', () => { state.color = b.dataset.color; if (state.tool === 'eraser') state.tool = 'pen'; sync(); }));
+  $$('.size').forEach(b => b.addEventListener('click', () => { state.size = +b.dataset.size; sync(); }));
+  document.getElementById('undoBtn').addEventListener('click', () => { strokes.pop(); redraw(); });
+
+  const clearBtn = document.getElementById('clearBtn');
+  let armed = null;
+  clearBtn.addEventListener('click', () => {
+    if (!armed) {
+      clearBtn.textContent = 'もう一度押すと消えます';
+      armed = setTimeout(() => { armed = null; clearBtn.textContent = 'ぜんぶ消す'; }, 2500);
+      return;
+    }
+    clearTimeout(armed); armed = null; clearBtn.textContent = 'ぜんぶ消す';
+    strokes.length = 0; redraw();
+  });
+  document.getElementById('fsBtn').addEventListener('click', () => {
+    try {
+      if (document.fullscreenElement) document.exitFullscreen();
+      else document.documentElement.requestFullscreen().catch(() => {});
+    } catch {}
+  });
+  // ── 書画カメラモード ──
+  // マス目モードと書画カメラモードで、書いたものは べつべつに とっておく
+  const cam = document.getElementById('cam');
+  const camMsg = document.getElementById('camMsg');
+  const camBtn = document.getElementById('camBtn');
+  const camSwitch = document.getElementById('camSwitch');
+  const camRot = document.getElementById('camRot');
+  let camOn = false, stream = null;
+  // 書いたものは ページごとに べつべつ：マス目 / ライブ映像 / 写真1まいずつ
+  const boardStrokes = strokes, liveStrokes = [];
+  const MAX_SHOTS = 6;
+  let shots = [], view = null, shotCount = 0; // view: null = ライブ、写真なら その写真
+  const shotImg = document.getElementById('shot');
+  const liveBtn = document.getElementById('liveBtn');
+  const thumbs = document.getElementById('thumbs');
+  let camId = store.get('camId', null);
+  let rot = store.get('camRot', false);
+  cam.classList.toggle('rot', rot);
+
+  function showCamMsg(t) { camMsg.textContent = t; camMsg.classList.toggle('show', !!t); }
+  function stopCam() {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    stream = null; cam.srcObject = null;
+  }
+  async function startCam(retry = true) {
+    stopCam();
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      showCamMsg('このページでは カメラが つかえません。\nhttps:// のアドレス（GitHub Pages など）で ひらいてください。');
+      return;
+    }
+    showCamMsg('カメラを じゅんびしています…');
+    const size = { width: { ideal: 1920 }, height: { ideal: 1080 } };
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: camId ? { deviceId: { exact: camId }, ...size } : size });
+    } catch (err) {
+      // まえに つかったカメラが ないときは、ほかのカメラで やりなおす
+      if (camId && retry && (err.name === 'OverconstrainedError' || err.name === 'NotFoundError' || err.name === 'NotReadableError')) {
+        camId = null; return startCam(false);
+      }
+      showCamMsg(err.name === 'NotAllowedError'
+        ? 'カメラの しようが きょかされていません。\nアドレスバーの カメラのマークから「許可」にしてください。'
+        : err.name === 'NotFoundError'
+          ? 'カメラが みつかりません。\n書画カメラが つながっているか たしかめてください。'
+          : 'カメラを ひらけませんでした。\nほかのアプリで カメラを つかっていないか たしかめてください。');
+      return;
+    }
+    if (!camOn) { stopCam(); return; } // じゅんび中に マス目へ もどったとき
+    cam.srcObject = stream;
+    const s = stream.getVideoTracks()[0].getSettings();
+    if (s.deviceId) { camId = s.deviceId; store.set('camId', camId); }
+    showCamMsg('');
+    try {
+      const list = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+      camSwitch.hidden = list.length < 2;
+      camSwitch.dataset.ids = JSON.stringify(list.map(d => d.deviceId));
+    } catch { camSwitch.hidden = true; }
+  }
+  function setCamMode(on) {
+    camOn = on;
+    strokes = on ? (view ? view.strokes : liveStrokes) : boardStrokes;
+    document.body.classList.toggle('cam', on);
+    camBtn.setAttribute('aria-pressed', String(on));
+    document.getElementById('camLabel').textContent = on ? 'マス目にもどる' : '書画カメラ';
+    if (on) startCam(); else { stopCam(); showCamMsg(''); }
+    redraw();
+  }
+  camBtn.addEventListener('click', () => setCamMode(!camOn));
+  camSwitch.addEventListener('click', () => {
+    const ids = JSON.parse(camSwitch.dataset.ids || '[]');
+    if (ids.length < 2) return;
+    camId = ids[(ids.indexOf(camId) + 1) % ids.length];
+    startCam();
+  });
+  camRot.addEventListener('click', () => { rot = !rot; store.set('camRot', rot); cam.classList.toggle('rot', rot); });
+
+  // ── 撮影と履歴 ──
+  function setView(v) {
+    view = v;
+    strokes = v ? v.strokes : liveStrokes;
+    if (v) shotImg.src = v.url;
+    shotImg.classList.toggle('show', !!v);
+    renderStrip(); redraw();
+  }
+  function renderStrip() {
+    liveBtn.setAttribute('aria-pressed', String(!view));
+    thumbs.innerHTML = '';
+    for (const s of shots) {
+      const b = document.createElement('button');
+      b.title = s.n + 'まいめの写真';
+      b.setAttribute('aria-pressed', String(s === view));
+      b.innerHTML = `<img src="${s.url}" alt=""><span class="num">${s.n}</span>`;
+      b.addEventListener('click', () => setView(s));
+      thumbs.appendChild(b);
+    }
+  }
+  function snap() {
+    if (!stream || !cam.videoWidth) { showCamMsg('カメラの映像が まだ ありません。'); setTimeout(() => { if (stream) showCamMsg(''); }, 1500); return; }
+    const c = document.createElement('canvas');
+    c.width = cam.videoWidth; c.height = cam.videoHeight;
+    const x = c.getContext('2d');
+    if (rot) { x.translate(c.width, c.height); x.rotate(Math.PI); } // 画面と おなじ向きで のこす
+    x.drawImage(cam, 0, 0);
+    shots.unshift({ url: c.toDataURL('image/jpeg', .9), strokes: [], n: ++shotCount });
+    if (shots.length > MAX_SHOTS) shots.pop(); // ふるい写真から きえる
+    setView(shots[0]);
+    // シャッターの ひかり
+    const f = document.createElement('div');
+    f.style.cssText = 'position:absolute;inset:0;background:#fff;pointer-events:none;z-index:6';
+    stage.appendChild(f);
+    f.animate([{ opacity: .8 }, { opacity: 0 }], { duration: 250 }).onfinish = () => f.remove();
+  }
+  document.getElementById('snapBtn').addEventListener('click', snap);
+  liveBtn.addEventListener('click', () => setView(null));
+  renderStrip();
+
+  document.addEventListener('keydown', e => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); strokes.pop(); redraw(); }
+  });
+
+  new ResizeObserver(resize).observe(stage);
+  sync(); resize();
+})();
+</script>
+
+</body></html>
